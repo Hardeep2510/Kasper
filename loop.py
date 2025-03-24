@@ -68,7 +68,7 @@ class Task(Generic[T]):
     co: Coroutine[Future, ..., T] = field()
     #class level variable
     counter:ClassVar[int]=0
-
+    
     def __repr__(self):
         return f"Task<{self.co.__name__}#{self.index}>"
     # Gives each instance a unique index, updates the counter
@@ -109,8 +109,8 @@ class UniqueList(list[T]):
             raise Exception(f"value {value} already in self {self}")
         super().append(value)
 
-class loop(asyncio.AbstractEventLoop):
-    def __init_(self):
+class Loop(asyncio.AbstractEventLoop):
+    def __init__(self):
         self.tasks: list[Task]=UniqueList()
         self.read: list[Task]=UniqueList()
         self.write: list[Task]=UniqueList()
@@ -130,7 +130,7 @@ class loop(asyncio.AbstractEventLoop):
                 self._handle_future(task,target,value)
 
             case _:
-                ok,value=self.handle_value(task,value)
+                ok,value=self._handle_value(task,value)
                 if not ok:
                     return
                 log.debug("recieved value %s",value)
@@ -141,7 +141,7 @@ class loop(asyncio.AbstractEventLoop):
     def _handle_future(self,task:Task,target:Target,value:Any):
         if target=="read":
             log.debug("Appending to read : %s",task)
-            self.write.append(task)
+            self.read.append(task)
         if target=="write":
             log.debug("adding to write: %s",task)
             self.write.append(task)
@@ -181,42 +181,88 @@ class loop(asyncio.AbstractEventLoop):
                 raise
             log.error(f"Task exception was never retrieved, {task=}, {exception=!r}")
             return False,None
+        
 
+    def select(self):
+        log.debug("selecting %s,%s",self.read,self.write,[])
+        if self.read or self.write:
+            read_ready,write_ready,_=select(self.read,self.write,[])
+            log.debug("removing from .read, .writ:%s,%s",read_ready,write_ready)
 
+            for to_remove,lst in [
+                (read_ready,self.read),
+                (write_ready,self.write)
+            ]:
+                for task in to_remove:
+                    list.remove(task)
 
+            all_ready=read_ready+write_ready
+            log.debug("adding to tasks: %s", all_ready)
+            self.tasks.extend(all_ready)
 
+            for task in all_ready:
+                log.debug("stepping %s",task)
+                #Resume execution of the task from where it was paused
+                task.step()
+        else:
+            log.debug("no read")
+            time.sleep(0.5)
 
-
-            
-
-
-
-
-
-
-
-
+    def create_task(
+            self, co: Coroutine[Future, ...,T],_name: str | None=None
+    )->Task[T]:
+        log.debug("creating task for %s", co)
+        task:Task[T]=Task(co)
+        log.debug("adding to tasks : %s",task)
+        self.tasks.append(task)
+        return task
     
+    def run_forever(self)-> None:
+        while True:
+            if self.tasks:
+                self._run_once()
+            else:
+                self.select()
+
+    def run_until_complete(self,co:Coroutine[Future, ...,T])->T:
+        task:Task=self.create_task(co)
+        self.entry_point=task
+        log.debug("adding to tasks: %s", task)
+        while not task.done:
+            if self.tasks:
+                self._run_once()
+
+            else:
+                self.select
+
+        assert task.result is not None
+
+        assert isinstance(task.result,ok)
+        return task.result.value
+    
+    def sock_accept(self,server:socket)->Future[tuple[socket,tuple[str,int]]]:
+        return Future(server,"read",server.accept)
+    
+    def sock_recv(self, socket_: socket, size: int) -> Future[bytes]:
+        return Future(socket_, "read", lambda: socket_.recv(size))
+    
+     
+    def sock_sendall(self, socket_: socket, payload: bytes) -> Future[None]:
+        return Future(socket_, "write", lambda: socket_.sendall(payload)) 
     
 
 
+loop = Loop()
 
-    
-
-
-
-
-
-
-
-
-
-
-
-
-    
-
-
-
+def run(co: Coroutine[Future, ..., T]) -> T:
+    return loop.run_until_complete(co)
+ 
+ 
+def get_event_loop():
+    return loop
+ 
+ 
+def unreachable():
+    assert False, "unreachable"
 
 
