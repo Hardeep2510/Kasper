@@ -103,13 +103,96 @@ class Task(Generic[T]):
     def throw(self,error: Exception):
         return self.co.throw(error)
     
-
-
 class UniqueList(list[T]):
     def append(self,value:T):
         if value in self:
             raise Exception(f"value {value} already in self {self}")
         super().append(value)
+
+class loop(asyncio.AbstractEventLoop):
+    def __init_(self):
+        self.tasks: list[Task]=UniqueList()
+        self.read: list[Task]=UniqueList()
+        self.write: list[Task]=UniqueList()
+        self.entry_point: Task | None = None
+
+
+    def _run_once(self):
+        log.debug("_run_once")
+        try:
+            task=self.tasks.pop(0)
+        except IndexError:
+            log.debug("tasks empty")
+            return
+        value=task.next_value
+        match value:
+            case Future(_what,target):
+                self._handle_future(task,target,value)
+
+            case _:
+                ok,value=self.handle_value(task,value)
+                if not ok:
+                    return
+                log.debug("recieved value %s",value)
+                self.tasks.append(task)
+                log.debug("recieved value %s",value)
+                task.next_value=value
+
+    def _handle_future(self,task:Task,target:Target,value:Any):
+        if target=="read":
+            log.debug("Appending to read : %s",task)
+            self.write.append(task)
+        if target=="write":
+            log.debug("adding to write: %s",task)
+            self.write.append(task)
+        
+            
+
+        log.debug(f"setting future of {task} to {value}")
+        task.future = value
+        
+
+    def _handle_value(self,task:Task,value:Any):
+        try:
+            match value:
+                case None:
+                    value=task.send(None)
+
+                case ok(ok_value):
+                    log.debug(f"{ok_value=}")
+                    value=task.send(ok_value)
+
+                case Exc(error):
+                    log.debug(f"{error}")
+                    value=task.throw(error)
+            return True,value
+        
+        except StopIteration as ex:
+            result=ex.value
+            log.debug(f"{task=} terminated with {result=}")
+            task.result=ok(result)
+            return False,None
+        
+        except Exception as exception:
+            log.debug(f"setting task.result={exception!r}")
+            task.result=Exc(exception)
+            if task is self.entry_point:
+                log.debug("reraising exception")
+                raise
+            log.error(f"Task exception was never retrieved, {task=}, {exception=!r}")
+            return False,None
+
+
+
+
+
+
+            
+
+
+
+
+
 
 
 
