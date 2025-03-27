@@ -26,7 +26,7 @@ setup_logging(log)
 class Result:
     value: Any
 
-class ok(Result):
+class Ok(Result):
     pass
 
 
@@ -53,7 +53,7 @@ class Future(Awaitable[T]):
         #making the function a generator,Suspends execution and returns
         yield self
         log.debug(f"returning future result {self.result=}")
-        assert isinstance(self.result,ok)
+        assert isinstance(self.result,Ok)
         return self.result.value
     
     def fileno(self):
@@ -72,7 +72,7 @@ class Task(Generic[T]):
     def __repr__(self):
         return f"Task<{self.co.__name__}#{self.index}>"
     # Gives each instance a unique index, updates the counter
-    def __post__init__(self):
+    def __post_init__(self):
         self.index=self.counter
         type(self).counter += 1
         log.debug("created %s", self)
@@ -95,7 +95,7 @@ class Task(Generic[T]):
     
     def step(self):
         try:
-            result=ok(self.future.callback())
+            result=Ok(self.future.callback())
         except Exception as ex:
             result=Exc(ex)
         self.next_value=self.future.result = result
@@ -158,7 +158,7 @@ class Loop(asyncio.AbstractEventLoop):
                 case None:
                     value=task.send(None)
 
-                case ok(ok_value):
+                case Ok(ok_value):
                     log.debug(f"{ok_value=}")
                     value=task.send(ok_value)
 
@@ -170,7 +170,7 @@ class Loop(asyncio.AbstractEventLoop):
         except StopIteration as ex:
             result=ex.value
             log.debug(f"{task=} terminated with {result=}")
-            task.result=ok(result)
+            task.result=Ok(result)
             return False,None
         
         except Exception as exception:
@@ -184,29 +184,28 @@ class Loop(asyncio.AbstractEventLoop):
         
 
     def select(self):
-        log.debug("selecting %s,%s",self.read,self.write,[])
+        log.debug("selecting %s, %s", self.read, self.write)
         if self.read or self.write:
-            read_ready,write_ready,_=select(self.read,self.write,[])
-            log.debug("removing from .read, .writ:%s,%s",read_ready,write_ready)
-
-            for to_remove,lst in [
-                (read_ready,self.read),
-                (write_ready,self.write)
+            read_ready, write_ready, _ = select(self.read, self.write, [])
+            log.debug("removing from .read, .write: %s, %s",
+                      read_ready, write_ready)
+            for to_remove, lst in [
+                (read_ready, self.read),
+                (write_ready, self.write),
             ]:
                 for task in to_remove:
-                    list.remove(task)
-
-            all_ready=read_ready+write_ready
+                    lst.remove(task)
+            all_ready = read_ready + write_ready
             log.debug("adding to tasks: %s", all_ready)
             self.tasks.extend(all_ready)
-
             for task in all_ready:
-                log.debug("stepping %s",task)
-                #Resume execution of the task from where it was paused
+                log.debug("stepping %s", task)
                 task.step()
         else:
             log.debug("no read")
             time.sleep(0.5)
+
+            
 
     def create_task(
             self, co: Coroutine[Future, ...,T],_name: str | None=None
@@ -233,11 +232,11 @@ class Loop(asyncio.AbstractEventLoop):
                 self._run_once()
 
             else:
-                self.select
+                self.select()
 
         assert task.result is not None
 
-        assert isinstance(task.result,ok)
+        assert isinstance(task.result,Ok)
         return task.result.value
     
     def sock_accept(self,server:socket)->Future[tuple[socket,tuple[str,int]]]:
